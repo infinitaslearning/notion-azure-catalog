@@ -1,0 +1,21 @@
+name: 'Notion azure catalog'
+description: 'A github action that synchronises a azure subscription and resource group info with Notion'
+branding:
+  icon: git-pull-request
+  color: blue
+inputs:
+  notion_token:
+    description: 'Notion API token'
+    required: true 
+  database:
+    description: 'Parent database to add to'
+    required: true
+  subscription_filter:
+    description: 'Regex string to filter subscription name by, defaults to .*' 
+    default: '.*'
+outputs:
+  status: 
+    description: 'The status of the scan'
+runs:
+  using: 'node16'
+  main: 'dist/index.js'
