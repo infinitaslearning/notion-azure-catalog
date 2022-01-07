@@ -2,7 +2,6 @@
 
 This action will scan all of the Azure subscritpions available to the provided token and update their information in the specified Notion database.
 
-
 ## Notion integration and token
 
 First, you need to have an integration access token - which you can get from https://www.notion.so/my-integrations after creating an integration.  Give the integration a friendly name like 'Github Actions'.
@@ -11,14 +10,22 @@ By default integrations cant access any content so you you *must* share your dat
 
 ## Notion Databases
 
-This action expects a Notion database with the following properties, this will become the 
+This action expects a Notion Resource database with the following properties for *Subscriptions*
+
+  - Name: text
+  - URL: url
+  - ID: text
+  - Updated: date
+  - Hash: text
+
+This action expects a Notion Resource database with the following properties for *Resources*
 
   - Name: text
   - URL: url
   - Type: select
   - ID: text
   - Location: select
-  - Subscription: select
+  - Subscription: relation[Subscriptions]
   - Updated: date
   - Hash: text
 
@@ -40,7 +47,8 @@ jobs:
        uses: infinitaslearning/notion-azure-catalog@main        
        with:          
          notion_token: ${{ secrets.NOTION_TOKEN }}
-         database: 2b26b4290cc84d95ad3e93c3255277a1    
+         resource_database: 2b26b4290cc84d95ad3e93c3255277a1    
+         subscription_database: 2b26b4290cc84d95ad3e93c3255277a1    
          subscription_filter: .*
       env:
         AZURE_CLIENT_ID: '${{ secrets.AZURE_CLIENT_ID }}'

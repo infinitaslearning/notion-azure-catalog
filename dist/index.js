@@ -58510,6 +58510,7 @@ const core = __nccwpck_require__(272)
 const { DefaultAzureCredential } = __nccwpck_require__(7886)
 const { SubscriptionClient } = __nccwpck_require__(196)
 const { ResourceManagementClient } = __nccwpck_require__(4439)
+// const { ConsumptionManagementClient } = require('@azure/arm-consumption')
 
 const getAzureData = async () => {
   // Azure SDK clients accept the credential as a parameter
@@ -58525,20 +58526,32 @@ const getAzureData = async () => {
       subscriptionPath: item.id,
       displayName: item.displayName,
       state: item.state,
+      netSavingsPossible: 0.0,
+      recommendations: [],
       resourceGroups: []
     }
     if (sub.displayName.match(subscriptionFilterRegex)) {
+      // core.debug(`Getting reservation recommendation data for subscription: ${sub.displayName} ...`)
+      // const usageClient = new ConsumptionManagementClient(credentials, sub.id)
+      // for await (const rec of usageClient.reservationRecommendations.list(sub.subscriptionPath)) {
+      //   sub.recommendations.push({
+      //     subscription: sub.subscriptionPath,
+      //     sku: rec.sku,
+      //     ...rec.properties
+      //   })
+      //   sub.netSavingsPossible += rec.properties.netSavings
+      // }
       core.debug(`Getting resource groups for subscription: ${sub.displayName} ...`)
       const rgClient = new ResourceManagementClient(credentials, sub.id)
-      for await (const item of rgClient.resourceGroups.list()) {
-        sub.resourceGroups.push(item)
+      for await (const rg of rgClient.resourceGroups.list()) {
+        sub.resourceGroups.push(rg)
       }
       subscriptions.push(sub)
     }
   }
 
   return {
-    subscriptions
+    azureData: subscriptions
   }
 }
 
@@ -58553,21 +58566,49 @@ exports.getAzureData = getAzureData
 const core = __nccwpck_require__(272)
 
 const loadData = async ({ notion }) => {
-  const database = core.getInput('database')
+  const resourceDatabase = core.getInput('resource_database')
+  const subscriptionDatabase = core.getInput('subscription_database')
 
-  // Get core DB structure
-  const dbStructure = await notion.databases.retrieve({
-    database_id: database
+  // Get subscription DB structure
+  const subscriptionDbStructure = await notion.databases.retrieve({
+    database_id: subscriptionDatabase
   })
-  const structure = Object.keys(dbStructure.properties).map((property) => {
-    return { name: dbStructure.properties[property].name, type: dbStructure.properties[property].type }
+  const subscriptionStructure = Object.keys(subscriptionDbStructure.properties).map((property) => {
+    return { name: subscriptionDbStructure.properties[property].name, type: subscriptionDbStructure.properties[property].type }
   })
+
+  // Get resource DB structure
+  const resourceDbStructure = await notion.databases.retrieve({
+    database_id: resourceDatabase
+  })
+  const resourceStructure = Object.keys(resourceDbStructure.properties).map((property) => {
+    return { name: resourceDbStructure.properties[property].name, type: resourceDbStructure.properties[property].type }
+  })
+
+  // Get the current subscription matrix and hashes in bulk to speed up updates
+  const subscriptions = {}
+  const getSubscriptionDatabaseRows = async (startCursor) => {
+    const pageRows = await notion.databases.query({
+      database_id: subscriptionDatabase,
+      start_cursor: startCursor
+    })
+    pageRows.results.forEach((item) => {
+      const pageId = item.id
+      const pageHash = item.properties?.Hash?.rich_text[0]?.text?.content
+      const subscriptionId = item.properties?.ID?.rich_text[0]?.text?.content
+      subscriptions[subscriptionId] = { pageId, pageHash }
+    })
+    if (pageRows.has_more) {
+      return await getSubscriptionDatabaseRows(pageRows.next_cursor)
+    }
+  }
+  await getSubscriptionDatabaseRows()
 
   // Get the current resource matrix and hashes in bulk to speed up updates
   const resources = {}
-  const getDatabaseRows = async (startCursor) => {
+  const getResourceDatabaseRows = async (startCursor) => {
     const pageRows = await notion.databases.query({
-      database_id: database,
+      database_id: resourceDatabase,
       start_cursor: startCursor
     })
     pageRows.results.forEach((item) => {
@@ -58577,13 +58618,15 @@ const loadData = async ({ notion }) => {
       resources[resourceId] = { pageId, pageHash }
     })
     if (pageRows.has_more) {
-      return await getDatabaseRows(pageRows.next_cursor)
+      return await getResourceDatabaseRows(pageRows.next_cursor)
     }
   }
-  await getDatabaseRows()
+  await getResourceDatabaseRows()
 
   return {
-    structure,
+    subscriptionStructure,
+    subscriptions,
+    resourceStructure,
     resources
   }
 }
@@ -58593,7 +58636,7 @@ exports.loadData = loadData
 
 /***/ }),
 
-/***/ 3913:
+/***/ 1018:
 /***/ ((__unused_webpack_module, exports) => {
 
 /**
@@ -58637,11 +58680,11 @@ const mappingFn = {
       }
     }
   },
-  Subscription: (sub, rg) => {
+  Subscription: (sub, rg, subscriptions) => {
     return {
-      select: {
-        name: sub.displayName
-      }
+      relation: [
+        { id: subscriptions[sub.id].pageId }
+      ]
     }
   },
   Environment: (sub, rg) => {
@@ -58684,11 +58727,79 @@ exports.mappingFn = mappingFn
 
 /***/ }),
 
+/***/ 2803:
+/***/ ((__unused_webpack_module, exports) => {
+
+/**
+ * For each possible field name in the service catalogue, expose a mapping function
+ * If a function is not found the field will be skipped
+ */
+const mappingFn = {
+  Name: (sub) => {
+    return {
+      title: [
+        {
+          text: {
+            content: sub.displayName
+          }
+        }
+      ]
+    }
+  },
+  Savings: (sub) => {
+    return {
+      number: sub.netSavingsPossible
+    }
+  },
+  ID: (sub) => {
+    return {
+      rich_text: [
+        {
+          text: {
+            content: sub.id
+          }
+        }
+      ]
+    }
+  },
+  Link: (sub) => {
+    return {
+      rich_text: [
+        {
+          text: {
+            content: 'Azure Portal',
+            link: {
+              url: `https://portal.azure.com/#@infinitaslearning.onmicrosoft.com/resource${sub.subscriptionPath}`
+            }
+          }
+        }
+      ]
+    }
+  },
+  URL: (sub) => {
+    return {
+      url: `https://portal.azure.com/#@infinitaslearning.onmicrosoft.com/resource${sub.subscriptionPath}`
+    }
+  },
+  Updated: () => {
+    return {
+      date: {
+        start: new Date().toISOString()
+      }
+    }
+  }
+}
+
+exports.mappingFn = mappingFn
+
+
+/***/ }),
+
 /***/ 4594:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 const core = __nccwpck_require__(272)
-const { mappingFn } = __nccwpck_require__(3913)
+const { mappingFn } = __nccwpck_require__(1018)
 const hash = __nccwpck_require__(66)
 
 let createdResources = 0
@@ -58696,8 +58807,8 @@ let updatedResources = 0
 let skippedResources = 0
 let erroredResources = 0
 
-const updateResources = async (subscriptions, { notion, database, structure, resources }) => {
-  for (const sub of subscriptions) {
+const updateResources = async (azureData, { notion, resourceDatabase, resourceStructure, resources, subscriptions }) => {
+  for (const sub of azureData) {
     for (const rg of sub.resourceGroups) {
       // Lets see if we can find the row
       const resourceId = rg.id
@@ -58705,18 +58816,18 @@ const updateResources = async (subscriptions, { notion, database, structure, res
       if (resources[resourceId]) {
         const pageId = resources[resourceId].pageId
         const pageHash = resources[resourceId].pageHash
-        await updateNotionRow(sub, rg, pageId, pageHash, { notion, database, structure })
+        await updateNotionRow(sub, rg, pageId, pageHash, { notion, resourceDatabase, resourceStructure, subscriptions })
       } else {
-        await createNotionRow(sub, rg, { notion, database, structure })
+        await createNotionRow(sub, rg, { notion, resourceDatabase, resourceStructure, subscriptions })
       }
     }
   }
   core.info(`Completed with ${createdResources} created, ${updatedResources} updated, ${skippedResources} unchanged and ${erroredResources} with errors`)
 }
 
-const updateNotionRow = async (sub, rg, pageId, pageHash, { notion, database, structure }) => {
+const updateNotionRow = async (sub, rg, pageId, pageHash, { notion, resourceDatabase, resourceStructure, subscriptions }) => {
   try {
-    const { properties, doUpdate } = createProperties(sub, rg, pageHash, { structure })
+    const { properties, doUpdate } = createProperties(sub, rg, pageHash, { resourceStructure, subscriptions })
     if (doUpdate) {
       core.debug(`Updating notion info for ${rg.name}`)
       await notion.pages.update({
@@ -58734,13 +58845,13 @@ const updateNotionRow = async (sub, rg, pageId, pageHash, { notion, database, st
   }
 }
 
-const createNotionRow = async (sub, rg, { notion, database, structure }) => {
+const createNotionRow = async (sub, rg, { notion, resourceDatabase, resourceStructure, subscriptions }) => {
   try {
-    const { properties } = createProperties(sub, rg, null, { structure })
+    const { properties } = createProperties(sub, rg, null, { resourceStructure, subscriptions })
     core.debug(`Creating notion info for ${rg.name}`)
     await notion.pages.create({
       parent: {
-        database_id: database
+        database_id: resourceDatabase
       },
       properties
     })
@@ -58751,12 +58862,12 @@ const createNotionRow = async (sub, rg, { notion, database, structure }) => {
   }
 }
 
-const createProperties = (sub, rg, pageHash, { structure }) => {
-  // This iterates over the structure, executes a mapping function for each based on the data provided
+const createProperties = (sub, rg, pageHash, { resourceStructure, subscriptions }) => {
+  // This iterates over the resourceStructure, executes a mapping function for each based on the data provided
   const properties = {}
-  for (const field of structure) {
+  for (const field of resourceStructure) {
     if (mappingFn[field.name]) {
-      properties[field.name] = mappingFn[field.name](sub, rg)
+      properties[field.name] = mappingFn[field.name](sub, rg, subscriptions)
     }
   }
   // Always have to check the hash afterwards, excluding the hash and the key
@@ -58781,6 +58892,107 @@ const createProperties = (sub, rg, pageHash, { structure }) => {
 }
 
 exports.updateResources = updateResources
+
+
+/***/ }),
+
+/***/ 3452:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+const core = __nccwpck_require__(272)
+const { mappingFn } = __nccwpck_require__(2803)
+const hash = __nccwpck_require__(66)
+
+let createdSubscriptions = 0
+let updatedSubscriptions = 0
+let skippedSubscriptions = 0
+let erroredSubscriptions = 0
+
+const updateSubscriptions = async (azureData, { notion, subscriptionDatabase, subscriptionStructure, subscriptions }) => {
+  let resourcesToUpdate = 0
+  for (const sub of azureData) {
+    resourcesToUpdate += sub.resourceGroups.length
+    if (subscriptions[sub.id]) {
+      const pageId = subscriptions[sub.id].pageId
+      const pageHash = subscriptions[sub.id].pageHash
+      await updateNotionRow(sub, pageId, pageHash, { notion, subscriptionDatabase, subscriptionStructure })
+    } else {
+      await createNotionRow(sub, { notion, subscriptionDatabase, subscriptionStructure, subscriptions })
+    }
+  }
+  core.info(`Completed with ${createdSubscriptions} created, ${updatedSubscriptions} updated, ${skippedSubscriptions} unchanged and ${erroredSubscriptions} with errors`)
+  return resourcesToUpdate
+}
+
+const updateNotionRow = async (sub, pageId, pageHash, { notion, subscriptionDatabase, subscriptionStructure }) => {
+  try {
+    const { properties, doUpdate } = createProperties(sub, pageHash, { subscriptionStructure })
+    if (doUpdate) {
+      core.debug(`Updating notion info for ${sub.displayName}`)
+      await notion.pages.update({
+        page_id: pageId,
+        properties
+      })
+      updatedSubscriptions++
+    } else {
+      core.debug(`Not updating notion info for ${sub.displayName} as hash unchanged`)
+      skippedSubscriptions++
+    }
+  } catch (ex) {
+    erroredSubscriptions++
+    core.warning(`Error updating notion document for ${sub.displayName}: ${ex.message} ...`)
+  }
+}
+
+const createNotionRow = async (sub, { notion, subscriptionDatabase, subscriptionStructure, subscriptions }) => {
+  try {
+    const { properties } = createProperties(sub, null, { subscriptionStructure })
+    core.debug(`Creating notion info for ${sub.displayName}`)
+    const page = await notion.pages.create({
+      parent: {
+        database_id: subscriptionDatabase
+      },
+      properties
+    })
+    // We have to add it to our lookup for later use
+    subscriptions[sub.id] = { pageId: page.id }
+    createdSubscriptions++
+  } catch (ex) {
+    erroredSubscriptions++
+    core.warning(`Error creating notion document for ${sub.displayName}: ${ex.message}`)
+  }
+}
+
+const createProperties = (sub, pageHash, { subscriptionStructure }) => {
+  // This iterates over the structure, executes a mapping function for each based on the data provided
+  const properties = {}
+  for (const field of subscriptionStructure) {
+    if (mappingFn[field.name]) {
+      properties[field.name] = mappingFn[field.name](sub)
+    }
+  }
+  // Always have to check the hash afterwards, excluding the hash and the key
+  const newPageHash = hash(properties, {
+    excludeKeys: (key) => {
+      return key === 'Hash' || key === 'Updated'
+    }
+  })
+
+  const doUpdate = newPageHash && newPageHash !== pageHash
+  properties.Hash = {
+    rich_text: [
+      {
+        text: {
+          content: newPageHash
+        }
+      }
+    ]
+  }
+
+  return { properties, doUpdate }
+}
+
+exports.updateSubscriptions = updateSubscriptions
 
 
 /***/ }),
@@ -59013,12 +59225,14 @@ var __webpack_exports__ = {};
 const core = __nccwpck_require__(272)
 const { Client, LogLevel } = __nccwpck_require__(7946)
 const { updateResources } = __nccwpck_require__(4594)
+const { updateSubscriptions } = __nccwpck_require__(3452)
 const { loadData } = __nccwpck_require__(3550)
 const { getAzureData } = __nccwpck_require__(4713)
 
 try {
   const NOTION_TOKEN = core.getInput('notion_token')
-  const database = core.getInput('database')
+  const resourceDatabase = core.getInput('resource_database')
+  const subscriptionDatabase = core.getInput('subscription_database')
 
   core.debug('Creating notion client ...')
   const notion = new Client({
@@ -59028,16 +59242,22 @@ try {
 
   const refreshData = async () => {
     // console.log(resource_result_list);
-    core.startGroup('🗂️  Loading services, systems and owners ...')
-    const { structure, resources } = await loadData({ notion })
-    core.info(`Found ${structure.length} fields in the Resource database: ${structure.map((item) => item.name)}`)
+    core.startGroup('🗂️  Loading subscriptions and resources ...')
+    const { resourceStructure, resources, subscriptionStructure, subscriptions } = await loadData({ notion })
+    core.info(`Found ${subscriptionStructure.length} fields in the Subscription database: ${subscriptionStructure.map((item) => item.name)}`)
+    core.info(`Loaded ${Object.keys(subscriptions || {}).length} existing subscriptions`)
+    core.info(`Found ${resourceStructure.length} fields in the Resource database: ${resourceStructure.map((item) => item.name)}`)
     core.info(`Loaded ${Object.keys(resources || {}).length} existing resources`)
     core.endGroup()
+
     core.startGroup('🌀 Getting azure subscriptions and resource groups ..')
-    const { subscriptions } = await getAzureData()
+    const { azureData } = await getAzureData()
     core.endGroup()
-    core.startGroup(`✨ Updating notion with ${subscriptions.length} services ...`)
-    await updateResources(subscriptions, { core, notion, database, structure, resources })
+    core.startGroup(`✨ Updating notion with ${azureData.length} subscriptions ...`)
+    const resourcesToUpdate = await updateSubscriptions(azureData, { core, notion, subscriptionDatabase, subscriptionStructure, subscriptions })
+    core.endGroup()
+    core.startGroup(`✨ Updating notion with ${resourcesToUpdate} resources ...`)
+    await updateResources(azureData, { core, notion, resourceDatabase, resourceStructure, resources, subscriptions })
     core.endGroup()
   }
 

@@ -17,6 +17,7 @@
   "dependencies": {
     "@actions/core": "^1.6.0",
     "@actions/github": "^5.0.0",
+    "@azure/arm-consumption": "^9.0.0",
     "@azure/arm-resources": "^5.0.0",
     "@azure/arm-resources-subscriptions": "^2.0.0",
     "@azure/arm-subscriptions": "^4.0.0",

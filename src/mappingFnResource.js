@@ -39,11 +39,11 @@ const mappingFn = {
       }
     }
   },
-  Subscription: (sub, rg) => {
+  Subscription: (sub, rg, subscriptions) => {
     return {
-      select: {
-        name: sub.displayName
-      }
+      relation: [
+        { id: subscriptions[sub.id].pageId }
+      ]
     }
   },
   Environment: (sub, rg) => {

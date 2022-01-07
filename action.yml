@@ -7,8 +7,11 @@ inputs:
   notion_token:
     description: 'Notion API token'
     required: true 
-  database:
-    description: 'Parent database to add to'
+  resource_database:
+    description: 'Resource database to add to'
+    required: true
+  subscription_database:
+    description: 'Subscription database to add to'
     required: true
   subscription_filter:
     description: 'Regex string to filter subscription name by, defaults to .*' 

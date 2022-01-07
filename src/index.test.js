@@ -5,7 +5,8 @@ const cp = require('child_process')
 jest.setTimeout(180000)
 
 test('complete input should succeed with default inputs', () => {
-  process.env.INPUT_DATABASE = '1ee4a9003e4548cda14d1a7e644ce014'
+  process.env.INPUT_RESOURCE_DATABASE = '1ee4a9003e4548cda14d1a7e644ce014'
+  process.env.INPUT_SUBSCRIPTION_DATABASE = 'c4faed83bee843bc9d66840f6eb47d28'
   process.env.INPUT_NOTION_TOKEN = process.env.NOTION_TOKEN
   process.env.INPUT_SUBSCRIPTION_FILTER = 'IL External Identity Management'
 
