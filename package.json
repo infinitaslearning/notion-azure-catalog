@@ -25,7 +25,7 @@
     "@notionhq/client": "^0.4.11",
     "@tryfabric/martian": "^1.1.1",
     "install": "^0.13.0",
-    "npm": "^8.3.0",
+    "npm": "^8.11.0",
     "object-hash": "^2.2.0",
     "yaml": "^1.10.2"
   },
