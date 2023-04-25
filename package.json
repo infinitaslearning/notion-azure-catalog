@@ -27,7 +27,7 @@
     "install": "^0.13.0",
     "npm": "^8.3.0",
     "object-hash": "^2.2.0",
-    "yaml": "^1.10.2"
+    "yaml": "^2.2.2"
   },
   "devDependencies": {
     "eslint": "^7.32.0",
